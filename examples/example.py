@@ -1,41 +1,22 @@
 import pymc as pm
 import pytensor.tensor as pt
 import numpy as np
-import os
-import pandas as pd
-
-from scipy.stats import norm
-
-# Print the current working directory
-print(f"Current working directory: {os.getcwd()}")
-
-cache_base_dir = os.getcwd()
-
-CACHE_DIR = os.path.join(cache_base_dir, "calcurves")
+from chronologer.calcurves import download_intcal20
+from chronologer.calibration import calibrate, interpolate_calcurve
 
 # Example usage to create initial intcal20 dictionary
 intcal20 = download_intcal20()
 
-# Users can add their custom curves to this dictionary
-calibration_curves = {
-    'intcal20': intcal20
-}
-
-# Extract the vectors from the calibration_curves dictionary
-calbp_tensor = pt.as_tensor_variable(calibration_curves['intcal20']['calbp'])
-c14bp_tensor = pt.as_tensor_variable(calibration_curves['intcal20']['c14bp'])
-c14_sigma_tensor = pt.as_tensor_variable(calibration_curves['intcal20']['c14_sigma'])
-
 # Example calibration curve data with negative values
-radiocarbon_age = np.array([-2500, -2000])                      # Measured radiocarbon age
-radiocarbon_error = np.array([30, 30])                          # Lab error
+radiocarbon_age = np.array([-2500, -2000])            # Measured radiocarbon age
+radiocarbon_error = np.array([30, 30])                # Lab error
 
 # Precompute calibration limits
 cal_dates = calibrate(radiocarbon_ages = radiocarbon_age, 
                         radiocarbon_errors = radiocarbon_error, 
-                        calbp = calbp, 
-                        c14bp = c14bp, 
-                        c14_sigma = c14_sigma, 
+                        calbp = intcal20['calbp'], 
+                        c14bp = intcal20['c14bp'], 
+                        c14_sigma = intcal20['c14_sigma'], 
                         hdi_prob = 0.99)
 
 N = len(radiocarbon_age)
@@ -45,6 +26,11 @@ upper_bound = cal_dates['HDI Upper (BP)'].values
 
 mids = (upper_bound + lower_bound) / 2
 prior_sd = np.repeat(200, N)
+
+# recast calibration curve data as tensors for use in PyMC model context
+calbp_tensor = pt.as_tensor_variable(intcal20['calbp'])
+c14bp_tensor = pt.as_tensor_variable(intcal20['c14bp'])
+c14_sigma_tensor = pt.as_tensor_variable(intcal20['c14_sigma'])
 
 with pm.Model() as model:
     tau = pm.Uniform('tau', 
@@ -71,6 +57,9 @@ with pm.Model() as model:
     trace = pm.sample(draws=5000, chains = 1, init="adapt_diag")
 
 pm.summary(trace)
+
+# compare with dates calibrated quickly using the standard approach
+cal_dates
 
 # Plot the results
 pm.plot_trace(trace)

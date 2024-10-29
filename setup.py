@@ -3,7 +3,9 @@ from setuptools import setup, find_packages
 setup(
     name="chronologer",
     version="0.1.0",
-    description="Bayesian Radiocarbon Calibration, Time-Series Modeling, and other inference involving data with chronological uncertainty",
+    description=("Bayesian Radiocarbon Date Calibration, Time-Series Modeling," 
+                 "and other inference involving data with chronological" 
+                 "uncertainty"),
     author="W. Christopher Carleton",
     author_email="ccarleton@protonmail.com",
     url="https://github.com/wccarleton/chronologer",

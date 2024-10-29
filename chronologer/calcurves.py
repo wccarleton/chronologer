@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import numpy as np
 import warnings
 
 # Path to the calcurves folder
@@ -63,11 +64,3 @@ def add_custom_curve(name, calbp, c14bp, c14_sigma):
         'c14bp': c14bp,
         'c14_sigma': c14_sigma
     }
-
-# Example usage to create initial intcal20 dictionary
-intcal20 = download_intcal20()
-
-# Users can add their custom curves to this dictionary
-calibration_curves = {
-    'intcal20': intcal20
-}

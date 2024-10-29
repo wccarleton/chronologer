@@ -1,13 +1,14 @@
 # Chronologer
 
-**Chronologer** is a Python package designed to support **Bayesian radiocarbon calibration** and **time-series modeling** using PyMC. It provides flexible tools for integrating chronological uncertainty into Bayesian models, allowing researchers to handle calibrated radiocarbon dates and related time-series data with ease.
+**Chronologer** is a Python package designed to support **Bayesian radiocarbon date calibration** and **time-series modeling** using PyMC. It provides flexible tools for integrating chronological uncertainty into Bayesian models, allowing researchers to handle calibrated radiocarbon dates and related time-series data with ease.
 
 ## Features
 
-- **Bayesian Radiocarbon Calibration**: Incorporate radiocarbon dating uncertainties directly into Bayesian models.
-- **Inhomogeneous Poisson Process (IPPP)**: Model event counts over time with varying intensity functions that account for radiocarbon calibration uncertainty.
-- **Custom Distributions**: Define and use custom radiocarbon calibration distributions with PyMC.
-- **Pre-Specified Chronological Orders**: Implement prior information such as `date_a > date_b` in Bayesian models.
+- **Bayesian Radiocarbon Calibration**: Incorporate radiocarbon dating uncertainties directly into Bayesian models using pytensor operations compatible with PyMC.
+- **Inhomogeneous Poisson Process (IPPP)**: Model event counts over time with varying intensity functions that account for radiocarbon dating and calibration uncertainties.
+-**Density-based Models**: Model event densities with standard models like Gaussian mixtures while
+accounting for radiocarbon dating and calibration uncertainties.
+- **Customize Phase Models**: Implement prior information such as `date_a > date_b` in Bayesian models using standard PyMC approaches.
 
 ## Installation
 
@@ -56,24 +57,64 @@ sample = cal_radiocarbon.sample(size=1000)
 ### Inhomogeneous Poisson Process (IPPP) with Radiocarbon Uncertainty
 
 ```python
-import pymc as pm
-import chronologer as cg
+# Example usage to create initial intcal20 dictionary
+intcal20 = download_intcal20()
 
-# Set up the IPPP model
+# Users can add their custom curves to this dictionary
+calibration_curves = {
+    'intcal20': intcal20
+}
+
+# Extract the vectors from the calibration_curves dictionary
+calbp_tensor = pt.as_tensor_variable(calibration_curves['intcal20']['calbp'])
+c14bp_tensor = pt.as_tensor_variable(calibration_curves['intcal20']['c14bp'])
+c14_sigma_tensor = pt.as_tensor_variable(calibration_curves['intcal20']['c14_sigma'])
+
+# Example calibration curve data with negative values
+radiocarbon_age = np.array([-2500, -2000])                      # Measured radiocarbon age
+radiocarbon_error = np.array([30, 30])                          # Lab error
+
+# Precompute calibration limits
+cal_dates = calibrate(radiocarbon_ages = radiocarbon_age, 
+                        radiocarbon_errors = radiocarbon_error, 
+                        calbp = calbp, 
+                        c14bp = c14bp, 
+                        c14_sigma = c14_sigma, 
+                        hdi_prob = 0.99)
+
+N = len(radiocarbon_age)
+
+lower_bound = cal_dates['HDI Lower (BP)'].values
+upper_bound = cal_dates['HDI Upper (BP)'].values
+
+mids = (upper_bound + lower_bound) / 2
+prior_sd = np.repeat(200, N)
+
 with pm.Model() as model:
-    beta_0 = pm.Normal('beta_0', mu=0, sigma=10)
-    beta_1 = pm.Normal('beta_1', mu=0, sigma=10)
-    
-    # Latent event times with radiocarbon calibration uncertainty
-    t_i = cg.CalRadiocarbon('t_i', calcurve=calcurve, c14_mean=2500, c14_err=30)
-    
-    # Intensity function for the Poisson process
-    def lambda_t(t):
-        return pm.math.exp(beta_0 + beta_1 * t)
-    
-    likelihood = pm.Poisson('obs', mu=lambda_t(t_i), observed=your_data)
-    
-    trace = pm.sample()
+    tau = pm.Uniform('tau', 
+                    lower=lower_bound, 
+                    upper=upper_bound,
+                    shape=N)
+
+    # calibration model
+    mean, error = interpolate_calcurve(tau, 
+                                       calbp_tensor, 
+                                       c14bp_tensor, 
+                                       c14_sigma_tensor)
+    r_latent = pm.Normal('r_latent', 
+                         mu=mean, 
+                         sigma=error, 
+                         shape=N)
+    r_measured = pm.Normal('r_measured', 
+                           mu=r_latent, 
+                           sigma=radiocarbon_error, 
+                           observed=radiocarbon_age,
+                           shape=N)
+
+    # Sample from the posterior
+    trace = pm.sample(draws=5000, chains = 1, init="adapt_diag")
+
+pm.summary(trace)
 ```
 
 ## Documentation

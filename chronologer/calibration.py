@@ -1,6 +1,7 @@
 from scipy.stats import norm
 import numpy as np
 import pandas as pd
+import pytensor.tensor as pt
 
 def calibrate(radiocarbon_ages, 
                 radiocarbon_errors, 
@@ -83,7 +84,7 @@ def calibrate(radiocarbon_ages,
     else:
         return results
 
-def compute_bin_index(tau, calbp):
+def compute_bin_index(tau, calbp, pyt = True):
     """
     Vectorized computation of bin indices where tau falls between calbp[i] and calbp[i+1].
     Assumes that tau draws are strictly inside (min(calbp), max(calbp)) and that
@@ -94,6 +95,7 @@ def compute_bin_index(tau, calbp):
     Parameters:
     - tau: Tensor, array-like or scalar. Values to be located within the bins.
     - calbp: Tensor, array-like. Calibration curve time points.
+    - pyt: Logical, if True (defult) return a tensor object; otherwise return an integer.
 
     Returns:
     - bin_index: Tensor. The bin indices for each tau.
@@ -104,17 +106,23 @@ def compute_bin_index(tau, calbp):
     numeric_result = pt.cast(logical_result, 'int32')
     # Sum the number of true conditions along the calibration curve axis and subtract 1
     bin_index = pt.sum(numeric_result, axis=1) - 1
-    return bin_index
+
+    # check whether to return tensor or int
+    if(pyt):
+        return bin_index
+    else: 
+        return bin_index.eval()
 
 def interpolate_calcurve(tau, 
                         calbp, 
                         c14bp, 
-                        c14_sigma):
+                        c14_sigma,
+                        pyt = True):
     """
     Linear interpolation for calibration curve using PyTensor operations.
     """
     # Compute bin index where tau falls
-    bin_idx = compute_bin_index(tau, calbp)
+    bin_idx = compute_bin_index(tau, calbp, pyt = pyt)
 
     # Compute right bin edge (bin_idx + 1)
     bin_idx_right = bin_idx + 1
@@ -137,3 +145,31 @@ def interpolate_calcurve(tau,
     sigma_interpolated = sigma_i + slope_sigma * (tau - calbp_i)
     
     return mean_interpolated, sigma_interpolated
+
+def simulate_c14(tau, 
+                 calbp, 
+                 c14bp, 
+                 c14_sigma):
+    """
+    Simulate radiocarbon measurements for given calendar dates based on the calibration curve.
+    
+    Args:
+    - tau: array-like, calendar ages (BP) to back-calibrate.
+    - calbp: array-like, calendar years (BP) from the calibration curve.
+    - c14bp: array-like, radiocarbon years from the calibration curve.
+    - c14_sigma: array-like, radiocarbon year uncertainties from the calibration curve.
+    
+    Returns:
+    - simulated_radiocarbon: array of sampled radiocarbon ages for the given calendar dates.
+    """
+    # Ensure calendar_dates is an array for vectorization
+    tau = np.atleast_1d(tau)
+    
+    # Interpolate the calibration curve for each calendar date
+    simulated_radiocarbon = []
+    mean, sigma = interpolate_calcurve(tau, calbp, c14bp, c14_sigma, pyt = False)
+    mean_eval = mean.eval() if hasattr(mean, "eval") else mean
+    sigma_eval = sigma.eval() if hasattr(sigma, "eval") else sigma
+    radiocarbon_sample = np.random.normal(loc=mean_eval, scale=sigma_eval, size=len(mean_eval))
+    
+    return np.array(radiocarbon_sample)
