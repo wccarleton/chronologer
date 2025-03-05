@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chronologer"
+version = "0.2.0"
+description = "Bayesian Chronological Modeling Tools for Archaeology"
+authors = [
+    {name = "Christopher Carleton", email = "carleton@gea.mpg.de"},
+]
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "pytensor",
+    "pymc",
+    "matplotlib"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+    "ipython"
+]
+
+[project.urls]
+Homepage = "https://github.com/wccarleton/chronologer"
+Documentation = "https://github.com/wccarleton/chronologer"
+Source = "https://github.com/wccarleton/chronologer"
