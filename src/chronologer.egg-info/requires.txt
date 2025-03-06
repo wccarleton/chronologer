@@ -1,0 +1,12 @@
+numpy
+scipy
+pandas
+pytensor
+pymc
+matplotlib
+
+[dev]
+pytest
+black
+flake8
+ipython

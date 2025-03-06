@@ -43,7 +43,7 @@ def hdi(t_values,
     for gap in gaps:
         end = hdi_ages[gap]
         intervals.append((start, end))
-        start = hdi_ages[gap + 1])
+        start = hdi_ages[gap + 1]
 
     intervals.append((start, hdi_ages[-1]))
     return intervals
@@ -102,16 +102,16 @@ def calibrate(radiocarbon_ages,
         })
 
     if as_pandas:
-        # Convert summary stats to table (but lose full pdf/hdi detail)
-        data = {
+        df = pd.DataFrame({
             "Radiocarbon Age": [r["radiocarbon_age"] for r in results],
             "Mean Calibrated Age (BP)": [r["mean"] for r in results],
             "Std Dev (BP)": [r["std"] for r in results],
-            "HDI Lower (BP)": [r["hdi_intervals"][0][0] for r in results],
-            "HDI Upper (BP)": [r["hdi_intervals"][-1][1] for r in results]
-        }
-        
-        df = pd.DataFrame(data)
+            "HDI Intervals": [r["hdi_intervals"] for r in results],
+            "Calibrated Distribution": [r["calibrated_distribution"] for r in results],
+            "CalBP Domain": [r["t_values"] for r in results],
+            "Calibrated PDF": [r["pdf_values"] for r in results],
+        })
         return df
+
 
     return results
