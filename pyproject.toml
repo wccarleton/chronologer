@@ -36,3 +36,6 @@ dev = [
 Homepage = "https://github.com/wccarleton/chronologer"
 Documentation = "https://github.com/wccarleton/chronologer"
 Source = "https://github.com/wccarleton/chronologer"
+
+[tool.flake8]
+max-line-length = 88
