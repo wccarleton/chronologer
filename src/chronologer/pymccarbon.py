@@ -1,6 +1,12 @@
-import pytensor.tensor as pt
+from __future__ import annotations
 
-def compute_bin_index(tau, calbp, pyt=True):
+import pytensor.tensor as pt
+from typing import Tuple
+
+
+def compute_bin_index(
+    tau: pt.TensorVariable, calbp: pt.TensorVariable, pyt: bool = True
+) -> pt.TensorVariable:
     """
     Compute bin indices where each tau falls between calbp[i] and calbp[i+1].
 
@@ -28,7 +34,7 @@ def compute_bin_index(tau, calbp, pyt=True):
 
     # Shape broadcasting works correctly for both scalar and vector tau now
     logical_result = (tau[:, None] - calbp[None, :]) >= 0
-    numeric_result = pt.cast(logical_result, 'int32')
+    numeric_result = pt.cast(logical_result, "int32")
     bin_index = pt.sum(numeric_result, axis=1) - 1
 
     # If pyt=False, evaluate result for standalone use
@@ -38,10 +44,17 @@ def compute_bin_index(tau, calbp, pyt=True):
     # If originally scalar, return scalar index, else return array
     return bin_index[0] if bin_index.shape[0] == 1 else bin_index
 
-def interpolate_calcurve(tau, calbp, c14bp, c14_sigma, pyt=True):
+
+def interpolate_calcurve(
+    tau: pt.TensorVariable,
+    calbp: pt.TensorVariable,
+    c14bp: pt.TensorVariable,
+    c14_sigma: pt.TensorVariable,
+    pyt: bool = True,
+) -> Tuple[pt.TensorVariable, pt.TensorVariable]:
     """
     Linearly interpolate the calibration curve at given tau(s).
-    
+
     Works for scalar tau (single date) and vector tau (many dates).
 
     Parameters
@@ -50,7 +63,7 @@ def interpolate_calcurve(tau, calbp, c14bp, c14_sigma, pyt=True):
         Calendar age(s) to interpolate.
     calbp, c14bp, c14_sigma : 1D array-like (pytensor variable)
         Calibration curve points (calendar age, radiocarbon age, error).
-    
+
     pyt : bool, default=True
         If True, return PyTensor objects.
         If False, evaluate and return numpy (for standalone testing).

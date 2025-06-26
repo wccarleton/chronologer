@@ -3,7 +3,12 @@
 # Author: Christopher Carleton
 # GitHub: https://github.com/wccarleton/calrcarbon
 
+from __future__ import annotations
+
 import os
+from typing import Dict, Optional
+import numpy as np
+
 import pandas as pd
 
 # Predefined calibration curves
@@ -16,7 +21,10 @@ DEFAULT_CURVES = {
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "calibration_curves")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-def load_calcurve(curve_name="intcal20", custom_path=None, quiet=False):
+
+def load_calcurve(
+    curve_name: str = "intcal20", custom_path: Optional[str] = None, quiet: bool = False
+) -> Dict[str, np.ndarray]:
     """
     Loads a calibration curve either from the web (if built-in) or from a provided file path.
 
@@ -62,11 +70,13 @@ def load_calcurve(curve_name="intcal20", custom_path=None, quiet=False):
     df = pd.read_csv(curve_path)
     if not set(["calbp", "c14bp", "c14_sigma"]).issubset(df.columns):
         raise ValueError(f"Curve file {curve_path} does not contain required columns.")
-    
+
     # Check if time in the file runs old to young (ascending) or young to old (descending)
     if df["calbp"].iloc[0] > df["calbp"].iloc[-1]:
         if not quiet:
-            print(f"{curve_name} has descending calbp (older to younger) implying positive BP values. Converting to negative BP (older more negative).")
+            print(
+                f"{curve_name} has descending calbp (older to younger) implying positive BP values. Converting to negative BP (older more negative)."
+            )
         df["calbp"] *= -1
         df["c14bp"] *= -1
     else:

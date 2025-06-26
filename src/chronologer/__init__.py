@@ -1,9 +1,11 @@
-"""
-Chronologer: A package for Bayesian radiocarbon date calibration and other modeling involving radiocarbon dates.
-"""
+"""Chronologer: tools for Bayesian radiocarbon date calibration."""
 
-from .calcurves import *
-from .calibration import *
+from __future__ import annotations
+
+from .calcurves import load_calcurve
+from .calibration import calibrate, hdi
+
+__all__ = ["load_calcurve", "calibrate", "hdi"]
 
 # Define version
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -1,10 +1,18 @@
-import pandas as pd
+from __future__ import annotations
+
+from typing import Dict, Iterable, List, Tuple
+
 import numpy as np
+import pandas as pd
+
 from .distributions import calrcarbon
 
-def hdi(t_values, 
-        pdf_values, 
-        hdi_prob=0.95):
+
+def hdi(
+    t_values: np.ndarray,
+    pdf_values: np.ndarray,
+    hdi_prob: float = 0.95,
+) -> List[Tuple[float, float]]:
     """
     Computes highest density interval (HDI) from a calibrated PDF.
 
@@ -22,7 +30,7 @@ def hdi(t_values,
     hdi_intervals : list of tuples
         List of (start, end) intervals covering the HDI.
     """
-    
+
     # Sort by descending density (highest first)
     idx = np.argsort(-pdf_values)
     sorted_pdf = pdf_values[idx]
@@ -37,7 +45,7 @@ def hdi(t_values,
 
     # Find contiguous runs (this handles multimodal intervals)
     gaps = np.where(np.diff(hdi_ages) > (t_values[1] - t_values[0]))[0]
-    intervals = []
+    intervals: List[Tuple[float, float]] = []
 
     start = hdi_ages[0]
     for gap in gaps:
@@ -48,12 +56,15 @@ def hdi(t_values,
     intervals.append((start, hdi_ages[-1]))
     return intervals
 
-def calibrate(radiocarbon_ages, 
-              radiocarbon_errors, 
-              calcurve, 
-              hdi_prob=0.95,
-              tol = 1e-7, 
-              as_pandas=True):
+
+def calibrate(
+    radiocarbon_ages: Iterable[float],
+    radiocarbon_errors: Iterable[float],
+    calcurve: Dict[str, np.ndarray],
+    hdi_prob: float = 0.95,
+    tol: float = 1e-7,
+    as_pandas: bool = True,
+) -> List[Dict[str, object]] | pd.DataFrame:
     """
     Calibrates one or more radiocarbon ages using the calrcarbon distribution.
 
@@ -67,7 +78,7 @@ def calibrate(radiocarbon_ages,
     Returns:
     - DataFrame if as_pandas=True, otherwise list of dicts (one per date).
     """
-    
+
     results = []
 
     for age, error in zip(radiocarbon_ages, radiocarbon_errors):
@@ -76,7 +87,7 @@ def calibrate(radiocarbon_ages,
         # Sample PDF over fine grid in the curve range
         t_values = np.linspace(cal.a, cal.b, 10000)
         pdf_values = cal.pdf(t_values)
-        
+
         # Trim to just the part where the density is meaningful
         mask = pdf_values > tol
         t_values = t_values[mask]
@@ -84,34 +95,41 @@ def calibrate(radiocarbon_ages,
 
         # Compute mean & std (this part's fine)
         mean_age = np.sum(t_values * pdf_values) * (t_values[1] - t_values[0])
-        variance_age = np.sum(((t_values - mean_age)**2) * pdf_values) * (t_values[1] - t_values[0])
+        variance_age = np.sum(((t_values - mean_age) ** 2) * pdf_values) * (
+            t_values[1] - t_values[0]
+        )
         std_age = np.sqrt(variance_age)
 
         # Compute proper HDI (potentially discontinuous)
         hdi_intervals = hdi(t_values, pdf_values, hdi_prob=hdi_prob)
 
         # Store results
-        results.append({
-            "radiocarbon_age": age,
-            "mean": mean_age,
-            "std": std_age,
-            "hdi_intervals": hdi_intervals,
-            "calibrated_distribution": cal,
-            "t_values": t_values,
-            "pdf_values": pdf_values,
-        })
+        results.append(
+            {
+                "radiocarbon_age": age,
+                "mean": mean_age,
+                "std": std_age,
+                "hdi_intervals": hdi_intervals,
+                "calibrated_distribution": cal,
+                "t_values": t_values,
+                "pdf_values": pdf_values,
+            }
+        )
 
     if as_pandas:
-        df = pd.DataFrame({
-            "Radiocarbon Age": [r["radiocarbon_age"] for r in results],
-            "Mean Calibrated Age (BP)": [r["mean"] for r in results],
-            "Std Dev (BP)": [r["std"] for r in results],
-            "HDI Intervals": [r["hdi_intervals"] for r in results],
-            "Calibrated Distribution": [r["calibrated_distribution"] for r in results],
-            "CalBP Domain": [r["t_values"] for r in results],
-            "Calibrated PDF": [r["pdf_values"] for r in results],
-        })
+        df = pd.DataFrame(
+            {
+                "Radiocarbon Age": [r["radiocarbon_age"] for r in results],
+                "Mean Calibrated Age (BP)": [r["mean"] for r in results],
+                "Std Dev (BP)": [r["std"] for r in results],
+                "HDI Intervals": [r["hdi_intervals"] for r in results],
+                "Calibrated Distribution": [
+                    r["calibrated_distribution"] for r in results
+                ],
+                "CalBP Domain": [r["t_values"] for r in results],
+                "Calibrated PDF": [r["pdf_values"] for r in results],
+            }
+        )
         return df
-
 
     return results
