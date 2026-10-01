@@ -4,9 +4,6 @@ from typing import Iterable
 
 import numpy as np
 
-from .pymccarbon import interpolate_calcurve
-
-
 def simulate_c14(
     tau: Iterable[float],
     calbp: np.ndarray,
@@ -17,7 +14,8 @@ def simulate_c14(
     Simulate radiocarbon measurements for given calendar dates based on the calibration curve.
 
     Args:
-    - tau: array-like, calendar ages (BP) to back-calibrate.
+    - tau: array-like calendar ages, in the same signed coordinates as calbp.
+      load_calcurve returns increasing negative BP coordinates.
     - calbp: array-like, calendar years (BP) from the calibration curve.
     - c14bp: array-like, radiocarbon years from the calibration curve.
     - c14_sigma: array-like, radiocarbon year uncertainties from the calibration curve.
@@ -25,15 +23,18 @@ def simulate_c14(
     Returns:
     - simulated_radiocarbon: array of sampled radiocarbon ages for the given calendar dates.
     """
-    # Ensure calendar_dates is an array for vectorization
-    tau = np.atleast_1d(tau)
-
-    # Interpolate the calibration curve for each calendar date
-    simulated_radiocarbon = []
-    mean, sigma = interpolate_calcurve(tau, calbp, c14bp, c14_sigma, pyt=False)
-    # if mean and sigma come in as tensors, evaluate them for this
-    mean_eval = mean.eval() if hasattr(mean, "eval") else mean
-    sigma_eval = sigma.eval() if hasattr(sigma, "eval") else sigma
+    # This numerical helper must not index NumPy arrays with symbolic tensors.
+    tau = np.atleast_1d(np.asarray(tau, dtype=float))
+    calbp, c14bp, c14_sigma = [np.asarray(a, dtype=float) for a in (calbp, c14bp, c14_sigma)]
+    if (tau.ndim != 1 or calbp.ndim != 1 or len(calbp) < 2
+            or c14bp.shape != calbp.shape or c14_sigma.shape != calbp.shape
+            or not all(np.isfinite(a).all() for a in (tau, calbp, c14bp, c14_sigma))
+            or np.any(np.diff(calbp) <= 0) or np.any(c14_sigma < 0)):
+        raise ValueError("Supply finite vectors, increasing curve times, and nonnegative curve errors.")
+    if np.any((tau < calbp[0]) | (tau > calbp[-1])):
+        raise ValueError("Calendar dates must be within the calibration curve's support.")
+    mean_eval = np.interp(tau, calbp, c14bp)
+    sigma_eval = np.interp(tau, calbp, c14_sigma)
     radiocarbon_sample = np.random.normal(
         loc=mean_eval, scale=sigma_eval, size=len(mean_eval)
     )

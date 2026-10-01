@@ -21,10 +21,10 @@ pip install -e .
 ```
 
 ## Requirements
-- Python >= 3.6
+- Python >= 3.12
 - NumPy
 - SciPy
-- PyMC
+- PyMC >= 6.3.2, < 7 (PyMC selects its compatible PyTensor version)
 - Sphinx (for documentation)
 
 The environment can be set up using the provided environment.yml file:

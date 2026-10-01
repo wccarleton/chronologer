@@ -2,7 +2,7 @@ numpy
 scipy
 pandas
 pytensor
-pymc
+pymc<7,>=6.3.2
 matplotlib
 
 [dev]

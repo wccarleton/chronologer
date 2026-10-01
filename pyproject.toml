@@ -14,13 +14,13 @@ authors = [
 ]
 readme = "README.md"
 license = {file = "LICENSE"}
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "numpy",
     "scipy",
     "pandas",
     "pytensor",
-    "pymc",
+    "pymc>=6.3.2,<7",
     "matplotlib"
 ]
 

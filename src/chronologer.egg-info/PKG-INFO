@@ -1,4 +1,4 @@
-Metadata-Version: 2.2
+Metadata-Version: 2.4
 Name: chronologer
 Version: 0.2.0
 Summary: Bayesian Chronological Modeling Tools for Archaeology
@@ -28,20 +28,21 @@ License: MIT License
 Project-URL: Homepage, https://github.com/wccarleton/chronologer
 Project-URL: Documentation, https://github.com/wccarleton/chronologer
 Project-URL: Source, https://github.com/wccarleton/chronologer
-Requires-Python: >=3.9
+Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: numpy
 Requires-Dist: scipy
 Requires-Dist: pandas
 Requires-Dist: pytensor
-Requires-Dist: pymc
+Requires-Dist: pymc<7,>=6.3.2
 Requires-Dist: matplotlib
 Provides-Extra: dev
 Requires-Dist: pytest; extra == "dev"
 Requires-Dist: black; extra == "dev"
 Requires-Dist: flake8; extra == "dev"
 Requires-Dist: ipython; extra == "dev"
+Dynamic: license-file
 
 # Chronologer
 
@@ -66,10 +67,10 @@ pip install -e .
 ```
 
 ## Requirements
-- Python >= 3.6
+- Python >= 3.12
 - NumPy
 - SciPy
-- PyMC
+- PyMC >= 6.3.2, < 7 (PyMC selects its compatible PyTensor version)
 - Sphinx (for documentation)
 
 The environment can be set up using the provided environment.yml file:

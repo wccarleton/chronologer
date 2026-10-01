@@ -13,5 +13,7 @@ src/chronologer.egg-info/SOURCES.txt
 src/chronologer.egg-info/dependency_links.txt
 src/chronologer.egg-info/requires.txt
 src/chronologer.egg-info/top_level.txt
-tests/tests_calcurves.py
+tests/test_calcurves.py
+tests/test_calibration_summary.py
+tests/test_hdi.py
 tests/tests_calibration.py
