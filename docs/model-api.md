@@ -47,13 +47,15 @@ own curve's spline references. There is no app-specific event schema in the engi
 | --- | --- |
 | `data` | Existing model-specific inputs, as described above |
 | `params` | Single: the five required bounds/prior arguments; mixture: optional `K_max`, `prior_center`, `prior_scale`, `grid` |
-| `mcmc_config` | Optional `draws`, `tune`, `chains`, `random_seed` |
+| `mcmc_config` | Optional `draws`, `tune`, `chains`, `random_seed`, `cores` |
 | `progress_callback` | Optional separate runtime callback receiving stage/completed/total dictionaries |
 
 Unknown or misplaced options raise `TypeError`; scientific input validation
 remains in the existing implementation. The caller copies option mappings and
 does not mutate data. Omitted sampling options retain **standalone engine** defaults:
-250 draws, 250 tuning iterations, two chains, seed 912. ChronoApp supplies its own
+250 draws, 250 tuning iterations, two chains, seed 912, one core. Positive integer
+`cores` enables PyMC parallel chains (capped by chain count), with `blas_cores="auto"`.
+Progress counts sum completed iterations across chains. ChronoApp supplies its own
 explicit user-selected settings (new summaries start at 1000/1000/4).
 
 Return objects are unchanged: `chronologer.density.DensityFit` and
@@ -64,6 +66,7 @@ parameterizations, samplers or calibration behavior change.
 Existing top-level `build_*`/`fit_*` functions and `chronologer.density` imports
 continue working without deprecation warnings. The old `chronologer.models`
 likelihood imports (`approx_integral`, `ippp_logp_sine`, `ippp_logp_lm`) remain
-available and also live under `chronologer.models.ippp`. No `ippp.gp` fitting
-function is implemented yet; that is the next model benchmark. No registry,
+available and also live under `chronologer.models.ippp`. The new
+[`ippp.gp` benchmark](ippp-gp.md) uses the same fitting signature and requires
+explicit observation `start` and `end`. No registry,
 backend abstraction or new inference dependency is introduced.

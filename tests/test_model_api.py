@@ -20,7 +20,7 @@ def test_legacy_imports_and_result_classes_remain_available():
     assert approx_integral is ch.models.ippp.approx_integral
     assert ippp_logp_lm is ch.models.ippp.ippp_logp_lm
     assert ippp_logp_sine is ch.models.ippp.ippp_logp_sine
-    assert not hasattr(ch.models.ippp, 'gp')
+    assert callable(ch.models.ippp.gp)
 
 
 @pytest.mark.parametrize('family', ['single', 'gmixture'])
@@ -77,15 +77,18 @@ def test_single_requires_explicit_input_mapping():
 
 
 @pytest.mark.parametrize('family', ['single', 'gmixture'])
-def test_switchboard_executes_existing_models_with_small_samples(family):
+@pytest.mark.parametrize('cores', [1, 2])
+def test_switchboard_executes_existing_models_with_small_samples(family, cores):
     progress = []
     data = single_data() if family == 'single' else [norm(-2.7, .2), norm(-1.7, .2)]
     params = SETTINGS if family == 'single' else {'K_max': 1}
     result = ch.fit(data, model=getattr(ch.models.density, family), params=params,
-                    mcmc_config=dict(draws=4, tune=4, chains=1, random_seed=19),
+                    mcmc_config=dict(draws=4, tune=4, chains=cores, cores=cores, random_seed=19),
                     progress_callback=progress.append)
     assert isinstance(result, implementation.DensityFit if family == 'single' else implementation.GaussianMixtureFit)
     assert isinstance(result.posterior, xr.DataTree)
-    assert result.posterior['posterior']['tau'].shape == (1, 4, 2)
+    assert result.posterior['posterior']['tau'].shape == (cores, 4, 2)
     assert all(np.isfinite(values).all() for values in result.density.values())
-    assert progress[-1]['completed'] == progress[-1]['total'] == 8
+    assert progress[-1]['completed'] == progress[-1]['total'] == 8 * cores
+    counts = [p['completed'] for p in progress]
+    assert counts == sorted(counts)

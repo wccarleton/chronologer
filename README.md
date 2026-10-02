@@ -54,8 +54,9 @@ Direct calls to `ch.models.density.single(...)` and
 `ch.models.density.gmixture(...)` use the same arguments. See
 [model API](docs/model-api.md) for single-model inputs, native negative-BP
 coordinates, sampling defaults and compatibility. Existing long-name APIs remain
-available. IPPP likelihood helpers live in `ch.models.ippp`; GP fitting is planned
-as the next benchmark, not yet implemented.
+available. IPPP likelihood helpers live in `ch.models.ippp`; the basic
+[`ch.models.ippp.gp` benchmark](docs/ippp-gp.md) requires explicit observation
+start/end dates and returns event intensity rather than a normalized density.
 
 ### Basic radiocarbon date calibration:
 

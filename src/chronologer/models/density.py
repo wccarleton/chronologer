@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from .. import density as _implementation
 
 __all__ = ['single', 'gmixture']
-_MCMC_KEYS = {'draws', 'tune', 'chains', 'random_seed'}
+_MCMC_KEYS = {'draws', 'tune', 'chains', 'random_seed', 'cores'}
 
 
 def _options(value, allowed, name):
@@ -28,7 +28,7 @@ def single(data, *, params=None, mcmc_config=None, progress_callback=None):
     data: mapping with radiocarbon_ages, radiocarbon_errors and calcurve, using
         the existing engine's negative-BP coordinates (no sign conversion).
     params: lower, upper, mean_prior, mean_prior_sd, sd_prior_scale (all required).
-    mcmc_config: optional draws, tune, chains, random_seed. Omitted values retain
+    mcmc_config: optional draws, tune, chains, random_seed, cores (default 1). Omitted values retain
         the engine defaults: 250 draws, 250 tuning iterations, 2 chains, seed 912.
     progress_callback: optional callable receiving stage/completed/total updates.
 
@@ -50,7 +50,7 @@ def gmixture(data, *, params=None, mcmc_config=None, progress_callback=None):
     data: existing sequence of calrcarbon or scipy frozen normal/uniform objects.
         Each radiocarbon distribution retains its own calibration-curve splines.
     params: optional K_max (default 5), prior_center, prior_scale and output grid.
-    mcmc_config: optional draws, tune, chains, random_seed. Omitted values retain
+    mcmc_config: optional draws, tune, chains, random_seed, cores (default 1). Omitted values retain
         the engine defaults: 250 draws, 250 tuning iterations, 2 chains, seed 912.
     progress_callback: optional callable receiving stage/completed/total updates.
 

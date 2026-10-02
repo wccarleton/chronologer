@@ -140,7 +140,7 @@ class GaussianMixtureFit:
 
 
 def fit_gaussian_mixture(events, K_max=5, *, grid=None, prior_center=None, prior_scale=None,
-                         draws=250, tune=250, chains=2, random_seed=912, progress_callback=None):
+                         draws=250, tune=250, chains=2, random_seed=912, cores=1, progress_callback=None):
     """Fit ordinary continuous PyMC NUTS; return posterior and density summary.
 
     Component allocations are analytically marginalized by pm.Mixture. No
@@ -149,18 +149,22 @@ def fit_gaussian_mixture(events, K_max=5, *, grid=None, prior_center=None, prior
     Short default runs establish execution, not convergence.
     """
     import pymc as pm
+    if type(cores) is not int or cores < 1:
+        raise ValueError('cores must be a positive integer.')
     total = chains * (tune + draws)
+    counts = [0] * chains
     def report(stage, completed=0):
         if progress_callback:
             progress_callback(dict(stage=stage, completed=completed, total=total))
     def on_draw(trace, draw):
+        counts[draw.chain] = draw.draw_idx + 1
         report(f"{'Tuning' if draw.tuning else 'Sampling'} · chain {draw.chain + 1}/{chains}",
-               draw.chain * (tune + draws) + draw.draw_idx + 1)
+               sum(counts))
     report("Building mixture model")
     model = build_gaussian_mixture(events, K_max, prior_center=prior_center, prior_scale=prior_scale)
     with model:
         report("Compiling and initializing")
-        trace = pm.sample(draws=draws, tune=tune, chains=chains, cores=1, random_seed=random_seed,
+        trace = pm.sample(draws=draws, tune=tune, chains=chains, cores=min(cores, chains), blas_cores='auto', random_seed=random_seed,
                           nuts_sampler="pymc", init="adapt_diag", target_accept=.95,
                           progressbar=False, compute_convergence_checks=False,
                           callback=on_draw if progress_callback else None)
@@ -221,7 +225,7 @@ def build_radiocarbon_density(radiocarbon_ages, radiocarbon_errors, calcurve, *,
 
 def fit_radiocarbon_density(radiocarbon_ages, radiocarbon_errors, calcurve, *,
                             lower, upper, mean_prior, mean_prior_sd, sd_prior_scale,
-                            draws=250, tune=250, chains=2, random_seed=912,
+                            draws=250, tune=250, chains=2, random_seed=912, cores=1,
                             progress_callback=None):
     """Fit with ordinary PyMC NUTS and return posterior plus density arrays.
 
@@ -234,13 +238,17 @@ def fit_radiocarbon_density(radiocarbon_ages, radiocarbon_errors, calcurve, *,
     """
     import pymc as pm
 
+    if type(cores) is not int or cores < 1:
+        raise ValueError('cores must be a positive integer.')
     total = chains * (tune + draws)
+    counts = [0] * chains
     def report(stage, completed=0):
         if progress_callback:
             progress_callback(dict(stage=stage, completed=completed, total=total))
 
     def on_draw(trace, draw):
-        completed = draw.chain * (tune + draws) + draw.draw_idx + 1
+        counts[draw.chain] = draw.draw_idx + 1
+        completed = sum(counts)
         report(f"{'Tuning' if draw.tuning else 'Sampling'} · chain {draw.chain + 1}/{chains}", completed)
 
     report("Building model")
@@ -249,7 +257,7 @@ def fit_radiocarbon_density(radiocarbon_ages, radiocarbon_errors, calcurve, *,
         mean_prior=mean_prior, mean_prior_sd=mean_prior_sd, sd_prior_scale=sd_prior_scale)
     with model:
         report("Compiling and initializing")
-        trace = pm.sample(draws=draws, tune=tune, chains=chains, cores=1,
+        trace = pm.sample(draws=draws, tune=tune, chains=chains, cores=min(cores, chains), blas_cores='auto',
                           random_seed=random_seed, nuts_sampler="pymc", init="adapt_diag",
                           progressbar=False, compute_convergence_checks=False,
                           callback=on_draw if progress_callback else None)
