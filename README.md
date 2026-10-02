@@ -36,6 +36,27 @@ conda activate chronologer
 
 ## Usage
 
+The concise fitting API groups models by family:
+
+```python
+import chronologer as ch
+from scipy.stats import norm
+
+result = ch.fit(
+    [norm(-2500, 30), norm(-2550, 40)],
+    model=ch.models.density.gmixture,
+    params={"K_max": 5},
+    mcmc_config={"draws": 1000, "tune": 1000, "chains": 4},
+)
+```
+
+Direct calls to `ch.models.density.single(...)` and
+`ch.models.density.gmixture(...)` use the same arguments. See
+[model API](docs/model-api.md) for single-model inputs, native negative-BP
+coordinates, sampling defaults and compatibility. Existing long-name APIs remain
+available. IPPP likelihood helpers live in `ch.models.ippp`; GP fitting is planned
+as the next benchmark, not yet implemented.
+
 ### Basic radiocarbon date calibration:
 
 ```python

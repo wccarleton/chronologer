@@ -48,9 +48,7 @@ def test_public_fit_density_and_requested_grid():
     np.testing.assert_allclose(density['pdf_values'], expected)
 
 
-def test_measurement_bridge_matches_existing_distributions_and_derivatives(monkeypatch):
-    monkeypatch.setattr(calrcarbon, '_interp_mean', None)
-    monkeypatch.setattr(calrcarbon, '_interp_error', None)
+def test_measurement_bridge_matches_existing_distributions_and_derivatives():
     curve = dict(calbp=np.linspace(-100, 0, 11), c14bp=np.linspace(-101, -1, 11),
                  c14_sigma=np.linspace(1, 2, 11))
     radiocarbon = calrcarbon(curve, -50, 3)

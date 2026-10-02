@@ -18,10 +18,15 @@ Unsupported distribution families raise an explicit error.
 For radiocarbon, the symbolic likelihood evaluates the **existing cubic spline
 coefficients** and combines measurement and curve errors in quadrature, matching
 `calrcarbon.logpdf`. Curve-support violations have log likelihood minus infinity.
-There is no calibration-grid approximation to this likelihood. The spline class
-cache in `distributions.py` is unchanged: all radiocarbon objects in a process
-must use the same curve. ChronoApp checks this and uses fresh worker processes.
-Adding further measurement families is confined to the engine measurement bridge.
+There is no calibration-grid approximation to this likelihood. Spline construction
+happens outside PyMC when a `calrcarbon` distribution is created. A bounded cache
+shares a mean/error spline pair for identical curve-array contents, and each
+distribution retains its own references. Different curves can coexist in the same
+model. Changing input arrays or evicting a cache entry cannot change an existing
+distribution's curve. The model bridge reads those references and evaluates their
+prepared coefficients symbolically; it never fits a new spline in the graph or
+during sampling. Adding further measurement families remains confined to the
+engine measurement bridge.
 
 ## Model and exact defaults
 

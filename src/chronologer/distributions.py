@@ -6,17 +6,29 @@
 from __future__ import annotations
 
 from typing import Tuple
+from functools import lru_cache
 
 import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.stats.distributions import norm
 
 
-class calrcarbon:
-    """Custom calibrated radiocarbon date distribution"""
+@lru_cache(maxsize=32)
+def _curve_splines(calendar_bytes, mean_bytes, error_bytes):
+    """Prepare once per curve content, outside any inference graph.
 
-    _interp_mean = None
-    _interp_error = None
+    Immutable byte keys distinguish custom curves and changed arrays, even when
+    names match. Eviction releases only the cache's references; distributions
+    retain their own spline references for their full lifetime.
+    """
+    calendar, mean, error = [np.frombuffer(values, dtype=np.float64)
+                             for values in (calendar_bytes, mean_bytes, error_bytes)]
+    return (CubicSpline(calendar, mean, extrapolate=False),
+            CubicSpline(calendar, error, extrapolate=False))
+
+
+class calrcarbon:
+    """Radiocarbon measurement with references to its curve's shared splines."""
 
     def __init__(
         self,
@@ -25,21 +37,19 @@ class calrcarbon:
         c14_err: float | None = None,
     ) -> None:
         self.name = "calrcarbon"
-        self.a = min(calcurve["calbp"])
-        self.b = max(calcurve["calbp"])
-        if calrcarbon._interp_mean is None:
-            calrcarbon._interp_mean = CubicSpline(
-                calcurve["calbp"], calcurve["c14bp"], extrapolate=False
-            )
-            calrcarbon._interp_error = CubicSpline(
-                calcurve["calbp"], calcurve["c14_sigma"], extrapolate=False
-            )
+        arrays = [np.asarray(calcurve[key], dtype=np.float64)
+                  for key in ("calbp", "c14bp", "c14_sigma")]
+        if any(a.ndim != 1 or a.shape != arrays[0].shape for a in arrays):
+            raise ValueError("Calibration curve arrays must be equally sized vectors.")
+        self._interp_mean, self._interp_error = _curve_splines(*(a.tobytes() for a in arrays))
+        self.a = float(self._interp_mean.x[0])
+        self.b = float(self._interp_mean.x[-1])
         self.c14_mean = c14_mean
         self.c14_err = c14_err
 
     def _calc_curve_params(self, tau: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        curve_mean = calrcarbon._interp_mean(tau)
-        curve_error = calrcarbon._interp_error(tau)
+        curve_mean = self._interp_mean(tau)
+        curve_error = self._interp_error(tau)
         return curve_mean, curve_error
 
     def _pdf(self, tau: np.ndarray, c14_mean: float, c14_err: float) -> np.ndarray:
