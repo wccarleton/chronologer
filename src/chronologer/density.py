@@ -65,6 +65,17 @@ def _measurement(event):
             float(loc + scale / 2), float(scale / np.sqrt(12)))
 
 
+def _priors(measurements, prior_center=None, prior_scale=None):
+    """Resolve the shared empirical location/scale hyperprior inputs."""
+    centres = np.array([item[1] for item in measurements])
+    widths = np.array([item[2] for item in measurements])
+    centre = float(centres.mean()) if prior_center is None else float(prior_center)
+    scale = float(max(np.ptp(centres), np.median(widths))) if prior_scale is None else float(prior_scale)
+    if not np.isfinite([centre, scale]).all() or scale <= 0:
+        raise ValueError("Prior center must be finite and prior scale positive.")
+    return centre, scale
+
+
 def build_gaussian_mixture(events, K_max=5, *, prior_center=None, prior_scale=None):
     """Build an overfitted Gaussian mixture for latent event times.
 
@@ -85,11 +96,7 @@ def build_gaussian_mixture(events, K_max=5, *, prior_center=None, prior_scale=No
         raise ValueError("Supply at least one event and an integer K_max from 1 to 20.")
     measurements = [_measurement(event) for event in events]
     centres = np.array([item[1] for item in measurements])
-    widths = np.array([item[2] for item in measurements])
-    centre = float(centres.mean()) if prior_center is None else float(prior_center)
-    scale = float(max(np.ptp(centres), np.median(widths))) if prior_scale is None else float(prior_scale)
-    if not np.isfinite([centre, scale]).all() or scale <= 0:
-        raise ValueError("Mixture prior center must be finite and prior scale positive.")
+    centre, scale = _priors(measurements, prior_center, prior_scale)
     with pm.Model(coords={"component": np.arange(K_max), "event": np.arange(len(events))}) as model:
         means = pm.Normal("means", mu=centre, sigma=scale, dims="component",
                           transform=pm.distributions.transforms.ordered,
