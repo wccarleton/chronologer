@@ -7,7 +7,13 @@ from scipy.stats import norm, uniform
 from .density import (_measurement, _priors, MIXTURE_LOG_SCALE_SD,
                       MIXTURE_SCALE_FRACTION)
 
-__all__ = ["Phase", "Order", "group_phases", "build_phase", "fit_phase"]
+__all__ = ["Phase", "Order", "group_phases", "build_phase", "fit_phase", "waic"]
+
+
+def waic(data, phases, *, measurements, posterior):
+    """Event-level WAIC with latent dates integrated out; see phase_stats.waic."""
+    from .phase_stats import waic as evaluate
+    return evaluate(data, phases, measurements=measurements, posterior=posterior)
 
 
 @dataclass(frozen=True)

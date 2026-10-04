@@ -86,3 +86,27 @@ predecessors are rejected. There are no direct inequality potentials, overlap
 constraints or Harris-matrix logic. Delta represents an intervening period only
 when the selected anchors are end/start; an explicit intervening period can
 instead be represented as another labelled phase.
+
+## Predictive assessment
+
+`chronologer.phases.waic(data, phases, measurements=observations,
+posterior=trace['posterior'].to_dataset())` returns whole-model WAIC summaries.
+For each event and retained draw it integrates the existing measurement likelihood
+over that event's phase distribution, holding its label fixed and integrating out
+its latent date. It does not use the fitted latent date as a predictor.
+
+`WAIC = -2 * ELPD_WAIC`; lower WAIC is better. The output includes the deviance-scale
+standard error, log-scale ELPD, effective parameter count `p_waic`, event/sample
+counts, and a warning when any pointwise log-likelihood variance exceeds 0.4.
+The calculation uses the conventional pointwise log-mean-exp minus posterior
+variance formula ([ArviZ reference](https://python.arviz.org/en/v0.22.0/api/generated/arviz.waic.html)).
+Compare only models using identical observations, phase memberships and measurement
+conventions. WAIC does not establish MCMC convergence or a correct chronology.
+
+Normal/uniform measurement integrals are analytic. Radiocarbon integration reuses
+the existing unnormalized `calrcarbon.logpdf` and its curve splines with composite
+Gauss-Legendre quadrature on spline intervals; orders double from 8 to at most 64
+until all draw-wise log integrals agree within 1e-6. Normal integration covers ten
+sigma, clipped to calibration support (unclipped omitted normal mass < 2e-23).
+No calibration likelihood or phase prior is changed. Nonconvergence or nonfinite
+predictive values make WAIC unavailable rather than returning an unreliable number.
