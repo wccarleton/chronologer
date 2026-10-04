@@ -1,0 +1,10 @@
+﻿{
+    "python.defaultInterpreterPath":  "C:\\Users\\carleton\\AppData\\Local\\miniconda3\\envs\\chronologer\\python.exe",
+    "python.condaPath":  "C:\\Users\\carleton\\AppData\\Local\\miniconda3\\Scripts\\conda.exe",
+    "python.terminal.activateEnvironment":  true,
+    "python.testing.pytestEnabled":  true,
+    "python.testing.unittestEnabled":  false,
+    "python.testing.pytestArgs":  [
+                                      "tests"
+                                  ]
+}
