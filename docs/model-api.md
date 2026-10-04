@@ -87,3 +87,29 @@ available and also live under `chronologer.models.ippp`. The new
 [`ippp.gp` benchmark](ippp-gp.md) uses the same fitting signature and requires
 explicit observation `start` and `end`. No registry,
 backend abstraction or new inference dependency is introduced.
+
+## Single-density simulation
+
+`simulate_single_density` generates independent prior-predictive datasets with
+PyMC, using the same truncated-normal population and hyperpriors as inference:
+
+```python
+simulation = ch.simulate_single_density(
+    6, distribution="calrcarbon", error=30,
+    calcurve=ch.load_calcurve("intcal20"),
+    lower=-3500, upper=-1500, mean_prior=-2500,
+    mean_prior_sd=500, sd_prior_scale=400, draws=1000,
+)
+```
+
+Supported measurement families are `calrcarbon`, `normal`, and `uniform`.
+`error` is measurement SD; uniform half-width is `sqrt(3) * error`.
+Radiocarbon simulation reuses the measurement splines and combines laboratory
+and curve uncertainty. Bounds must lie inside the chosen calibration curve.
+All dates use native negative-BP coordinates.
+
+Each replicate draws new `tau_mu` and `tau_sd`, latent `tau` dates, and noisy
+`measured` dates. There is no conditioning on observations, MCMC, or tuning.
+The `DensitySim` result contains `prior` (a PyMC DataTree with a `prior` group)
+and `density` (the existing mean and pointwise 95% density summary arrays).
+`simulate_radiocarbon_density(n, calcurve, ...)` is a convenience wrapper.

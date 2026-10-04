@@ -16,6 +16,17 @@ MIXTURE_LOG_SCALE_SD = 0.75
 MIXTURE_SCALE_FRACTION = 0.2
 
 
+def _spline(t, curve):
+    """Differentiable evaluation of the existing calibration curve spline."""
+    import pytensor.tensor as pt
+    knots = pt.as_tensor_variable(curve.x)
+    coefficients = pt.as_tensor_variable(curve.c)
+    index = pt.clip(pt.searchsorted(knots, t, side='right') - 1, 0, len(curve.x) - 2)
+    delta = t - knots[index]
+    return ((coefficients[0, index] * delta + coefficients[1, index]) * delta
+            + coefficients[2, index]) * delta + coefficients[3, index]
+
+
 def _measurement(event):
     """Bridge existing distribution objects to differentiable measurement logp.
 
@@ -34,16 +45,9 @@ def _measurement(event):
         mean_spline, error_spline = event._interp_mean, event._interp_error
         # Use the same spline evaluation as distributions.py, without a new
         # interpolation approximation or a non-differentiable Python callback.
-        def spline(t, curve):
-            knots = pt.as_tensor_variable(curve.x)
-            coefficients = pt.as_tensor_variable(curve.c)
-            index = pt.clip(pt.searchsorted(knots, t, side="right") - 1, 0, len(curve.x) - 2)
-            delta = t - knots[index]
-            return ((coefficients[0, index] * delta + coefficients[1, index]) * delta
-                    + coefficients[2, index]) * delta + coefficients[3, index]
         def logp(t):
             safe = pt.clip(t, event.a, event.b)
-            mean, error = spline(safe, mean_spline), spline(safe, error_spline)
+            mean, error = _spline(safe, mean_spline), _spline(safe, error_spline)
             value = pm.logp(pm.Normal.dist(mu=mean, sigma=pt.sqrt(event.c14_err**2 + error**2)), event.c14_mean)
             return pt.switch((t >= event.a) & (t <= event.b), value, -np.inf)
         grid = np.linspace(event.a, event.b, 10000)
@@ -273,17 +277,32 @@ def _fit_density(model, *, lower, upper, draws, tune, chains, random_seed, cores
                           progressbar=False, compute_convergence_checks=False,
                           callback=on_draw if progress_callback else None)
     report("Evaluating density", total)
-    posterior = trace["posterior"].to_dataset()
+    return DensityFit(trace, _density(trace['posterior'].to_dataset(), lower, upper))
+
+
+def _density(posterior, lower, upper):
+    """Evaluate and summarize the same population density for prior/posterior draws."""
     means = posterior["tau_mu"].values.reshape(-1, 1)
     scales = posterior["tau_sd"].values.reshape(-1, 1)
     grid = np.linspace(lower, upper, 512)
     densities = truncnorm.pdf(grid[None, :], (lower - means) / scales,
                              (upper - means) / scales, loc=means, scale=scales)
     if not np.isfinite(densities).all():
-        raise ValueError("Posterior density contains non-finite values.")
+        raise ValueError("Model density contains non-finite values.")
     low, high = np.quantile(densities, [.025, .975], axis=0)
-    return DensityFit(trace, {"t_values": grid, "pdf_values": densities.mean(axis=0),
-                              "lower_values": low, "upper_values": high})
+    return {"t_values": grid, "pdf_values": densities.mean(axis=0),
+            "lower_values": low, "upper_values": high}
+
+
+def _population(*, lower, upper, mean_prior, mean_prior_sd, sd_prior_scale, initial=None):
+    import pymc as pm
+    if (not np.isfinite([lower, upper, mean_prior, mean_prior_sd, sd_prior_scale]).all()
+            or lower >= upper or mean_prior_sd <= 0 or sd_prior_scale <= 0):
+        raise ValueError('Supply finite increasing bounds and positive prior scales.')
+    mu = pm.TruncatedNormal('tau_mu', mu=mean_prior, sigma=mean_prior_sd, lower=lower, upper=upper)
+    sd = pm.HalfNormal('tau_sd', sigma=sd_prior_scale)
+    return pm.TruncatedNormal('tau', mu=mu, sigma=sd, lower=lower, upper=upper,
+                              dims='event', initval=initial)
 
 
 def build_single_density(events, *, lower, upper, mean_prior, mean_prior_sd, sd_prior_scale):
@@ -317,11 +336,8 @@ def build_single_density(events, *, lower, upper, mean_prior, mean_prior_sd, sd_
             raise ValueError('Each measurement support must intersect the event bounds.')
         initial.append(np.clip(centre, a + (b - a) * .01, b - (b - a) * .01))
     with pm.Model(coords={'event': np.arange(len(events))}) as model:
-        mu = pm.TruncatedNormal('tau_mu', mu=mean_prior, sigma=mean_prior_sd,
-                                lower=lower, upper=upper)
-        sd = pm.HalfNormal('tau_sd', sigma=sd_prior_scale)
-        tau = pm.TruncatedNormal('tau', mu=mu, sigma=sd, lower=lower, upper=upper,
-                                 dims='event', initval=initial)
+        tau = _population(lower=lower, upper=upper, mean_prior=mean_prior,
+                          mean_prior_sd=mean_prior_sd, sd_prior_scale=sd_prior_scale, initial=initial)
         pm.Potential('measurements', pt.sum(pt.stack([bridge[0](tau[i])
                                                     for i, bridge in enumerate(bridges)])))
     return model
@@ -345,3 +361,64 @@ def fit_single_density(events, *, lower, upper, mean_prior, mean_prior_sd, sd_pr
     return _fit_density(model, lower=lower, upper=upper, draws=draws, tune=tune,
                         chains=chains, random_seed=random_seed, cores=cores,
                         progress_callback=progress_callback)
+
+
+@dataclass
+class DensitySim:
+    """Prior-predictive draws and their mean event-time density, not a fit."""
+    prior: object
+    density: dict
+
+
+def simulate_single_density(n, *, distribution='normal', error=30., calcurve=None,
+                            lower, upper, mean_prior, mean_prior_sd, sd_prior_scale,
+                            draws=1000, random_seed=912, progress_callback=None):
+    """Generate independent datasets using the single-density hierarchy in PyMC.
+
+    Each draw samples location, scale and n latent dates, then noisy measurements.
+    error is a shared measurement SD: laboratory SD for radiocarbon, calendar SD
+    for normal, and sqrt(3) * error is the uniform half-width. Radiocarbon uses
+    the inference model's existing cubic splines and combined curve/lab error.
+    There is no observed data, MCMC, tuning, or convergence diagnostic. All dates
+    retain native negative-BP coordinates. calcurve is needed only for calrcarbon.
+    """
+    import pymc as pm
+    import pytensor.tensor as pt
+    from .distributions import calrcarbon
+    if type(n) is not int or n < 1 or type(draws) is not int or draws < 2:
+        raise ValueError('Supply positive integer n and at least two predictive draws.')
+    if distribution not in {'normal', 'uniform', 'calrcarbon'} or not np.isfinite(error) or error <= 0:
+        raise ValueError('Choose a supported measurement distribution and positive error SD.')
+    curve = None
+    if distribution == 'calrcarbon':
+        if calcurve is None:
+            raise ValueError('Radiocarbon simulation requires a calibration curve.')
+        curve = calrcarbon(calcurve)
+        if not curve.a <= lower < upper <= curve.b:
+            raise ValueError('Simulation bounds must lie within calibration curve support.')
+    def report(stage, completed=0):
+        if progress_callback:
+            progress_callback(dict(stage=stage, completed=completed, total=draws))
+    report('Building simulation')
+    with pm.Model(coords={'event': np.arange(n)}) as model:
+        tau = _population(lower=lower, upper=upper, mean_prior=mean_prior,
+                          mean_prior_sd=mean_prior_sd, sd_prior_scale=sd_prior_scale)
+        if curve is not None:
+            mean = _spline(tau, curve._interp_mean)
+            sigma = pt.sqrt(error**2 + _spline(tau, curve._interp_error)**2)
+            pm.Normal('measured', mu=mean, sigma=sigma, dims='event')
+        elif distribution == 'normal':
+            pm.Normal('measured', mu=tau, sigma=error, dims='event')
+        else:
+            radius = np.sqrt(3) * error
+            pm.Uniform('measured', lower=tau - radius, upper=tau + radius, dims='event')
+        report('Drawing prior-predictive datasets')
+        trace = pm.sample_prior_predictive(draws=draws, random_seed=random_seed)
+    report('Evaluating simulated density', draws)
+    return DensitySim(trace, _density(trace['prior'].to_dataset(), lower, upper))
+
+
+def simulate_radiocarbon_density(n, calcurve, *, error=30., **kwargs):
+    """Radiocarbon-only convenience call; see simulate_single_density."""
+    return simulate_single_density(n, distribution='calrcarbon', calcurve=calcurve,
+                                   error=error, **kwargs)
