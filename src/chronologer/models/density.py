@@ -7,7 +7,7 @@ from collections.abc import Mapping
 
 from .. import density as _implementation
 
-__all__ = ['single', 'gmixture']
+__all__ = ['single_density', 'single', 'gmixture']
 _MCMC_KEYS = {'draws', 'tune', 'chains', 'random_seed', 'cores'}
 
 
@@ -20,6 +20,21 @@ def _options(value, allowed, name):
     if unknown:
         raise TypeError(f'Unknown {name} option(s): {", ".join(sorted(map(str, unknown)))}')
     return dict(value)
+
+
+def single_density(data, *, params=None, mcmc_config=None, progress_callback=None):
+    """Fit one truncated-normal density to supported measurement objects.
+
+    data is a sequence of calrcarbon or frozen SciPy normal/uniform objects.
+    Legacy radiocarbon mappings keep their original builder and likelihood.
+    Bounds and priors remain required; sampling defaults and DensityFit stay
+    unchanged. No coordinate conversion is performed.
+    """
+    if isinstance(data, Mapping):
+        return single(data, params=params, mcmc_config=mcmc_config, progress_callback=progress_callback)
+    scientific = _options(params, {'lower', 'upper', 'mean_prior', 'mean_prior_sd', 'sd_prior_scale'}, 'params')
+    sampling = _options(mcmc_config, _MCMC_KEYS, 'mcmc_config')
+    return _implementation.fit_single_density(data, **scientific, **sampling, progress_callback=progress_callback)
 
 
 def single(data, *, params=None, mcmc_config=None, progress_callback=None):

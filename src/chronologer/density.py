@@ -1,8 +1,8 @@
-"""Callable form of the radiocarbon hierarchy exercised by test_pymc_models.
+"""Single-density and Gaussian-mixture models sharing measurement machinery.
 
 All times use negative BP. Bounds and prior scales are scientific inputs, not
-sampling defaults. This is the common-bound variant covered by the execution
-tests, not the notebook's optional per-event, calibration-derived truncation.
+sampling defaults. The legacy radiocarbon hierarchy remains unchanged; the
+generic single-density model reuses the mixture's measurement likelihoods.
 """
 
 from dataclasses import dataclass
@@ -236,6 +236,21 @@ def fit_radiocarbon_density(radiocarbon_ages, radiocarbon_errors, calcurve, *,
     Optional progress_callback receives stage/completed/total dictionaries.
     Counts include tuning and posterior draws; compilation has no percentage.
     """
+    if type(cores) is not int or cores < 1:
+        raise ValueError('cores must be a positive integer.')
+    if progress_callback:
+        progress_callback(dict(stage="Building model", completed=0, total=chains * (tune + draws)))
+    model = build_radiocarbon_density(
+        radiocarbon_ages, radiocarbon_errors, calcurve, lower=lower, upper=upper,
+        mean_prior=mean_prior, mean_prior_sd=mean_prior_sd, sd_prior_scale=sd_prior_scale)
+    return _fit_density(model, lower=lower, upper=upper, draws=draws, tune=tune,
+                        chains=chains, random_seed=random_seed, cores=cores,
+                        progress_callback=progress_callback)
+
+
+def _fit_density(model, *, lower, upper, draws, tune, chains, random_seed, cores,
+                 progress_callback=None):
+    """Shared single-density sampling and density adaptation; no model changes."""
     import pymc as pm
 
     if type(cores) is not int or cores < 1:
@@ -251,10 +266,6 @@ def fit_radiocarbon_density(radiocarbon_ages, radiocarbon_errors, calcurve, *,
         completed = sum(counts)
         report(f"{'Tuning' if draw.tuning else 'Sampling'} · chain {draw.chain + 1}/{chains}", completed)
 
-    report("Building model")
-    model = build_radiocarbon_density(
-        radiocarbon_ages, radiocarbon_errors, calcurve, lower=lower, upper=upper,
-        mean_prior=mean_prior, mean_prior_sd=mean_prior_sd, sd_prior_scale=sd_prior_scale)
     with model:
         report("Compiling and initializing")
         trace = pm.sample(draws=draws, tune=tune, chains=chains, cores=min(cores, chains), blas_cores='auto',
@@ -273,3 +284,64 @@ def fit_radiocarbon_density(radiocarbon_ages, radiocarbon_errors, calcurve, *,
     low, high = np.quantile(densities, [.025, .975], axis=0)
     return DensityFit(trace, {"t_values": grid, "pdf_values": densities.mean(axis=0),
                               "lower_values": low, "upper_values": high})
+
+
+def build_single_density(events, *, lower, upper, mean_prior, mean_prior_sd, sd_prior_scale):
+    """Build the single-density hierarchy without sampling.
+
+    Accept calrcarbon and frozen SciPy normal/uniform measurement objects, as
+    for the Gaussian mixture. Each radiocarbon event retains its own curve.
+    All dates must already use common coordinates (native negative BP).
+    Bounds truncate the event distribution, not the measurement likelihoods.
+    Location has the existing truncated-normal prior; scale is HalfNormal.
+    Radiocarbon uses the mixture's spline likelihood with curve/error uncertainty
+    combined, rather than the legacy linear-interpolation r_latent hierarchy.
+    """
+    import pymc as pm
+    import pytensor.tensor as pt
+    events = list(events)
+    if not events:
+        raise ValueError('Supply at least one supported measurement.')
+    if (not np.isfinite([lower, upper, mean_prior, mean_prior_sd, sd_prior_scale]).all()
+            or lower >= upper or mean_prior_sd <= 0 or sd_prior_scale <= 0):
+        raise ValueError('Supply finite increasing bounds and positive prior scales.')
+    bridges = [_measurement(event) for event in events]
+    initial = []
+    for event, (_, centre, _) in zip(events, bridges):
+        a, b = lower, upper
+        if getattr(event, 'name', None) == 'calrcarbon':
+            a, b = max(a, event.a), min(b, event.b)
+        elif event.dist.name == 'uniform':
+            a, b = max(a, event.support()[0]), min(b, event.support()[1])
+        if a >= b:
+            raise ValueError('Each measurement support must intersect the event bounds.')
+        initial.append(np.clip(centre, a + (b - a) * .01, b - (b - a) * .01))
+    with pm.Model(coords={'event': np.arange(len(events))}) as model:
+        mu = pm.TruncatedNormal('tau_mu', mu=mean_prior, sigma=mean_prior_sd,
+                                lower=lower, upper=upper)
+        sd = pm.HalfNormal('tau_sd', sigma=sd_prior_scale)
+        tau = pm.TruncatedNormal('tau', mu=mu, sigma=sd, lower=lower, upper=upper,
+                                 dims='event', initval=initial)
+        pm.Potential('measurements', pt.sum(pt.stack([bridge[0](tau[i])
+                                                    for i, bridge in enumerate(bridges)])))
+    return model
+
+
+def fit_single_density(events, *, lower, upper, mean_prior, mean_prior_sd, sd_prior_scale,
+                       draws=250, tune=250, chains=2, random_seed=912, cores=1,
+                       progress_callback=None):
+    """Fit with the existing single-density sampler and return DensityFit.
+
+    The density is the posterior mean truncated-normal density on the supplied
+    bounds, with a pointwise 95% interval. No measurement types, priors, calendar
+    coordinates or sampling settings are inferred from app state.
+    """
+    if type(cores) is not int or cores < 1:
+        raise ValueError('cores must be a positive integer.')
+    if progress_callback:
+        progress_callback(dict(stage='Building model', completed=0, total=chains * (draws + tune)))
+    model = build_single_density(events, lower=lower, upper=upper, mean_prior=mean_prior,
+                                 mean_prior_sd=mean_prior_sd, sd_prior_scale=sd_prior_scale)
+    return _fit_density(model, lower=lower, upper=upper, draws=draws, tune=tune,
+                        chains=chains, random_seed=random_seed, cores=cores,
+                        progress_callback=progress_callback)

@@ -1,8 +1,25 @@
 # Concise model API
 
-Model families live under `chronologer.models`. `density.single` and
+Model families live under `chronologer.models`. `density.single_density` and
 `density.gmixture` are fitting functions, not classes or model-name strings.
 Use them directly or through the small `chronologer.fit` delegator:
+
+Both models live in the same `chronologer.density` implementation module.
+`build_single_density(events, **params)` and `fit_single_density(events, **params)`
+accept existing `calrcarbon` and frozen SciPy `norm`/`uniform` measurements,
+including mixed types and different calibration curves in one fit. The event
+distribution is one truncated normal within explicitly supplied bounds, with
+`mean_prior`, `mean_prior_sd` and `sd_prior_scale` unchanged. The generic single
+model reuses the mixture's `_measurement` likelihoods, including cubic curve
+splines and combined curve/laboratory error. This differs from the legacy
+radiocarbon hierarchy's linear interpolation and explicit `r_latent` variable.
+
+The old `build_radiocarbon_density`, `fit_radiocarbon_density`, and mapping-based
+`models.density.single` calls preserve that original hierarchy and return type.
+The new `models.density.single_density` also accepts legacy mappings, delegating
+to the original fitter. Sequence input uses the new generic builder. Both return
+`DensityFit` and share the same sampler, density calculation, priors and native
+calendar convention. There is no simulation path in this patch.
 
 ```python
 import chronologer as ch
