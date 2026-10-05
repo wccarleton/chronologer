@@ -95,19 +95,34 @@ def build_gaussian_mixture(events, K_max=5, *, prior_center=None, prior_scale=No
     if not np.isfinite([centre, scale]).all() or scale <= 0:
         raise ValueError("Mixture prior center must be finite and prior scale positive.")
     with pm.Model(coords={"component": np.arange(K_max), "event": np.arange(len(events))}) as model:
+        tau = _mixture(K_max, centre, scale, initial=centres)
+        pm.Potential("measurements", pt.sum(pt.stack([item[0](tau[i]) for i, item in enumerate(measurements)])))
+    return model
+
+
+def _mixture(K_max, centre, scale, *, initial=None, predictive=False):
+    """Shared population priors; predictive draws sort iid means explicitly."""
+    import pymc as pm
+    import pytensor.tensor as pt
+    if type(K_max) is not int or not 1 <= K_max <= 20 or not np.isfinite([centre, scale]).all() or scale <= 0:
+        raise ValueError('Supply K_max from 1 to 20, finite prior center and positive prior scale.')
+    if predictive:
+        raw = pm.Normal('raw_means', mu=centre, sigma=scale, dims='component')
+        means = pm.Deterministic('means', pt.sort(raw), dims='component')
+    else:
         means = pm.Normal("means", mu=centre, sigma=scale, dims="component",
                           transform=pm.distributions.transforms.ordered,
                           initval=centre + scale * (np.linspace(-.5, .5, K_max) if K_max > 1 else np.zeros(1)))
-        scales = pm.LogNormal("scales", mu=np.log(MIXTURE_SCALE_FRACTION * scale),
-                              sigma=MIXTURE_LOG_SCALE_SD, dims="component")
-        weights = (pm.Dirichlet("weights", a=np.full(K_max, MIXTURE_CONCENTRATION), dims="component")
-                   if K_max > 1 else pm.Deterministic("weights", pt.ones(1), dims="component"))
-        tau = pm.Mixture("tau", w=weights, comp_dists=pm.Normal.dist(mu=means, sigma=scales),
-                         dims="event", initval=centres)
-        pm.Potential("measurements", pt.sum(pt.stack([item[0](tau[i]) for i, item in enumerate(measurements)])))
+    scales = pm.LogNormal("scales", mu=np.log(MIXTURE_SCALE_FRACTION * scale),
+                          sigma=MIXTURE_LOG_SCALE_SD, dims="component")
+    weights = (pm.Dirichlet("weights", a=np.full(K_max, MIXTURE_CONCENTRATION), dims="component")
+               if K_max > 1 else pm.Deterministic("weights", pt.ones(1), dims="component"))
+    tau = pm.Mixture("tau", w=weights, comp_dists=pm.Normal.dist(mu=means, sigma=scales),
+                     dims="event", initval=initial)
+    model = pm.modelcontext(None)
     model.mixture_priors = dict(center=centre, scale=scale, concentration=MIXTURE_CONCENTRATION,
                                 log_scale_sd=MIXTURE_LOG_SCALE_SD, scale_fraction=MIXTURE_SCALE_FRACTION)
-    return model
+    return tau
 
 
 def evaluate_mixture_density(posterior, grid):
@@ -116,11 +131,14 @@ def evaluate_mixture_density(posterior, grid):
     Never renormalizes a cropped grid. The returned band is pointwise 95%, not
     simultaneous. PyMC's DataTree stays inside the standalone engine API.
     """
-    from scipy.stats import norm
     grid = np.asarray(grid, dtype=float)
     if grid.ndim != 1 or grid.size < 2 or not np.isfinite(grid).all() or np.any(np.diff(grid) <= 0):
         raise ValueError("Density grid must be a finite, strictly increasing vector.")
-    dataset = posterior["posterior"].to_dataset()
+    return _mixture_density(posterior['posterior'].to_dataset(), grid)
+
+
+def _mixture_density(dataset, grid):
+    from scipy.stats import norm
     arrays = [dataset[name].transpose("chain", "draw", "component").values.reshape(-1, dataset.sizes["component"])
               for name in ("means", "scales", "weights")]
     means, scales, weights = arrays
@@ -368,6 +386,31 @@ class DensitySim:
     """Prior-predictive draws and their mean event-time density, not a fit."""
     prior: object
     density: dict
+    priors: dict | None = None
+
+
+def _simulate_measurement(tau, distribution, error, calcurve):
+    """Forward measurement counterpart using the existing curve splines."""
+    import pymc as pm
+    import pytensor.tensor as pt
+    from .distributions import calrcarbon
+    if distribution not in {'normal', 'uniform', 'calrcarbon'} or not np.isfinite(error) or error <= 0:
+        raise ValueError('Choose a supported measurement distribution and positive error SD.')
+    curve = None
+    if distribution == 'calrcarbon':
+        if calcurve is None:
+            raise ValueError('Radiocarbon simulation requires a calibration curve.')
+        curve = calrcarbon(calcurve)
+        safe = pt.clip(tau, curve.a, curve.b)
+        mean = _spline(safe, curve._interp_mean)
+        sigma = pt.sqrt(error**2 + _spline(safe, curve._interp_error)**2)
+        pm.Normal('measured', mu=mean, sigma=sigma, dims='event')
+    elif distribution == 'normal':
+        pm.Normal('measured', mu=tau, sigma=error, dims='event')
+    else:
+        radius = np.sqrt(3) * error
+        pm.Uniform('measured', lower=tau - radius, upper=tau + radius, dims='event')
+    return curve
 
 
 def simulate_single_density(n, *, distribution='normal', error=30., calcurve=None,
@@ -383,10 +426,9 @@ def simulate_single_density(n, *, distribution='normal', error=30., calcurve=Non
     retain native negative-BP coordinates. calcurve is needed only for calrcarbon.
     """
     import pymc as pm
-    import pytensor.tensor as pt
     from .distributions import calrcarbon
-    if type(n) is not int or n < 1 or type(draws) is not int or draws < 2:
-        raise ValueError('Supply positive integer n and at least two predictive draws.')
+    if type(n) is not int or n < 1 or type(draws) is not int or draws < 1:
+        raise ValueError('Supply positive integer n and predictive draws.')
     if distribution not in {'normal', 'uniform', 'calrcarbon'} or not np.isfinite(error) or error <= 0:
         raise ValueError('Choose a supported measurement distribution and positive error SD.')
     curve = None
@@ -403,15 +445,7 @@ def simulate_single_density(n, *, distribution='normal', error=30., calcurve=Non
     with pm.Model(coords={'event': np.arange(n)}) as model:
         tau = _population(lower=lower, upper=upper, mean_prior=mean_prior,
                           mean_prior_sd=mean_prior_sd, sd_prior_scale=sd_prior_scale)
-        if curve is not None:
-            mean = _spline(tau, curve._interp_mean)
-            sigma = pt.sqrt(error**2 + _spline(tau, curve._interp_error)**2)
-            pm.Normal('measured', mu=mean, sigma=sigma, dims='event')
-        elif distribution == 'normal':
-            pm.Normal('measured', mu=tau, sigma=error, dims='event')
-        else:
-            radius = np.sqrt(3) * error
-            pm.Uniform('measured', lower=tau - radius, upper=tau + radius, dims='event')
+        _simulate_measurement(tau, distribution, error, calcurve)
         report('Drawing prior-predictive datasets')
         trace = pm.sample_prior_predictive(draws=draws, random_seed=random_seed)
     report('Evaluating simulated density', draws)
@@ -422,3 +456,35 @@ def simulate_radiocarbon_density(n, calcurve, *, error=30., **kwargs):
     """Radiocarbon-only convenience call; see simulate_single_density."""
     return simulate_single_density(n, distribution='calrcarbon', calcurve=calcurve,
                                    error=error, **kwargs)
+
+
+def simulate_gaussian_mixture(n, K_max=5, *, prior_center, prior_scale,
+                              distribution='normal', error=30., calcurve=None,
+                              draws=1000, random_seed=912, progress_callback=None):
+    """Prior-predictive mixture datasets using the inference population priors.
+
+    Center and scale are explicit because no measurements supply empirical
+    defaults. Means are sorted iid Normal draws; weights/scales retain existing
+    priors. Gaussian components are unbounded. Radiocarbon dates outside curve
+    support fail the whole run; no truncation or rejection sampling is applied.
+    Returns DensitySim with prior draws, mixture density and resolved priors.
+    """
+    import pymc as pm
+    if type(n) is not int or n < 1 or type(draws) is not int or draws < 1:
+        raise ValueError('Supply positive integer n and predictive draws.')
+    def report(stage, completed=0):
+        if progress_callback:
+            progress_callback(dict(stage=stage, completed=completed, total=draws))
+    report('Building mixture simulation')
+    with pm.Model(coords={'component': np.arange(K_max), 'event': np.arange(n)}) as model:
+        tau = _mixture(K_max, prior_center, prior_scale, predictive=True)
+        curve = _simulate_measurement(tau, distribution, error, calcurve)
+        report('Drawing prior-predictive datasets')
+        trace = pm.sample_prior_predictive(draws=draws, random_seed=random_seed)
+    data = trace['prior'].to_dataset()
+    if curve is not None and np.any((data['tau'].values < curve.a) | (data['tau'].values > curve.b)):
+        raise ValueError('Generated dates fall outside calibration curve support. Choose a prior center and scale within the curve; mixture components are unbounded.')
+    report('Evaluating simulated density', draws)
+    means, scales = data['means'].values, data['scales'].values
+    grid = np.linspace(np.min(means - 6 * scales), np.max(means + 6 * scales), 2048)
+    return DensitySim(trace, _mixture_density(data, grid), model.mixture_priors)

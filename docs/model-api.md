@@ -113,3 +113,33 @@ Each replicate draws new `tau_mu` and `tau_sd`, latent `tau` dates, and noisy
 The `DensitySim` result contains `prior` (a PyMC DataTree with a `prior` group)
 and `density` (the existing mean and pointwise 95% density summary arrays).
 `simulate_radiocarbon_density(n, calcurve, ...)` is a convenience wrapper.
+
+`simulate_gaussian_mixture` uses the existing Gaussian-mixture population priors
+and the same forward measurement machinery:
+
+```python
+simulation = ch.simulate_gaussian_mixture(
+    6, K_max=3, prior_center=-2500, prior_scale=400,
+    distribution="calrcarbon", error=30,
+    calcurve=ch.load_calcurve("intcal20"), draws=1000,
+)
+```
+
+Center and scale are required because simulation has no measurements from which
+to derive inference's empirical defaults. Each replicate draws sorted iid
+Normal component means, existing LogNormal SDs and Dirichlet weights, then event
+dates and measurements. Sorting during generation represents the ordered-mean
+prior; an MCMC ordering transform alone does not sort forward random draws.
+The returned `DensitySim` also contains resolved `priors`. Density evaluation
+reuses the mixture evaluator and never renormalizes a cropped grid.
+
+Gaussian components remain unbounded. If any generated radiocarbon event lies
+outside calibration-curve support, the entire run fails with an explicit error;
+no extrapolation, truncation or rejection sampling changes the model. Choose
+center/scale well within curve support or use calendar measurements.
+
+Both simulation functions accept `draws=1`: one randomly drawn population
+parameter set generates n event dates, and the density band's bounds coincide
+with that draw's density. This is distinct from specifying fixed parameters.
+ChronoApp budgets n × replicates and exports the first dataset, while the
+standalone engine does not impose the app's resource limits.
