@@ -1,8 +1,25 @@
 # Concise model API
 
-Model families live under `chronologer.models`. `density.single` and
+Model families live under `chronologer.models`. `density.single_density` and
 `density.gmixture` are fitting functions, not classes or model-name strings.
 Use them directly or through the small `chronologer.fit` delegator:
+
+Both models live in the same `chronologer.density` implementation module.
+`build_single_density(events, **params)` and `fit_single_density(events, **params)`
+accept existing `calrcarbon` and frozen SciPy `norm`/`uniform` measurements,
+including mixed types and different calibration curves in one fit. The event
+distribution is one truncated normal within explicitly supplied bounds, with
+`mean_prior`, `mean_prior_sd` and `sd_prior_scale` unchanged. The generic single
+model reuses the mixture's `_measurement` likelihoods, including cubic curve
+splines and combined curve/laboratory error. This differs from the legacy
+radiocarbon hierarchy's linear interpolation and explicit `r_latent` variable.
+
+The old `build_radiocarbon_density`, `fit_radiocarbon_density`, and mapping-based
+`models.density.single` calls preserve that original hierarchy and return type.
+The new `models.density.single_density` also accepts legacy mappings, delegating
+to the original fitter. Sequence input uses the new generic builder. Both return
+`DensityFit` and share the same sampler, density calculation, priors and native
+calendar convention. There is no simulation path in this patch.
 
 ```python
 import chronologer as ch
@@ -70,3 +87,59 @@ available and also live under `chronologer.models.ippp`. The new
 [`ippp.gp` benchmark](ippp-gp.md) uses the same fitting signature and requires
 explicit observation `start` and `end`. No registry,
 backend abstraction or new inference dependency is introduced.
+
+## Single-density simulation
+
+`simulate_single_density` generates independent prior-predictive datasets with
+PyMC, using the same truncated-normal population and hyperpriors as inference:
+
+```python
+simulation = ch.simulate_single_density(
+    6, distribution="calrcarbon", error=30,
+    calcurve=ch.load_calcurve("intcal20"),
+    lower=-3500, upper=-1500, mean_prior=-2500,
+    mean_prior_sd=500, sd_prior_scale=400, draws=1000,
+)
+```
+
+Supported measurement families are `calrcarbon`, `normal`, and `uniform`.
+`error` is measurement SD; uniform half-width is `sqrt(3) * error`.
+Radiocarbon simulation reuses the measurement splines and combines laboratory
+and curve uncertainty. Bounds must lie inside the chosen calibration curve.
+All dates use native negative-BP coordinates.
+
+Each replicate draws new `tau_mu` and `tau_sd`, latent `tau` dates, and noisy
+`measured` dates. There is no conditioning on observations, MCMC, or tuning.
+The `DensitySim` result contains `prior` (a PyMC DataTree with a `prior` group)
+and `density` (the existing mean and pointwise 95% density summary arrays).
+`simulate_radiocarbon_density(n, calcurve, ...)` is a convenience wrapper.
+
+`simulate_gaussian_mixture` uses the existing Gaussian-mixture population priors
+and the same forward measurement machinery:
+
+```python
+simulation = ch.simulate_gaussian_mixture(
+    6, K_max=3, prior_center=-2500, prior_scale=400,
+    distribution="calrcarbon", error=30,
+    calcurve=ch.load_calcurve("intcal20"), draws=1000,
+)
+```
+
+Center and scale are required because simulation has no measurements from which
+to derive inference's empirical defaults. Each replicate draws sorted iid
+Normal component means, existing LogNormal SDs and Dirichlet weights, then event
+dates and measurements. Sorting during generation represents the ordered-mean
+prior; an MCMC ordering transform alone does not sort forward random draws.
+The returned `DensitySim` also contains resolved `priors`. Density evaluation
+reuses the mixture evaluator and never renormalizes a cropped grid.
+
+Gaussian components remain unbounded. If any generated radiocarbon event lies
+outside calibration-curve support, the entire run fails with an explicit error;
+no extrapolation, truncation or rejection sampling changes the model. Choose
+center/scale well within curve support or use calendar measurements.
+
+Both simulation functions accept `draws=1`: one randomly drawn population
+parameter set generates n event dates, and the density band's bounds coincide
+with that draw's density. This is distinct from specifying fixed parameters.
+ChronoApp budgets n × replicates and exports the first dataset, while the
+standalone engine does not impose the app's resource limits.

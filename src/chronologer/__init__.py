@@ -7,6 +7,8 @@ from .calibration import calibrate, hdi
 from .density import (build_radiocarbon_density, fit_radiocarbon_density,
                       build_gaussian_mixture, fit_gaussian_mixture, evaluate_mixture_density)
 from . import models
+from .density import build_single_density, fit_single_density
+from .density import DensitySim, simulate_single_density, simulate_radiocarbon_density, simulate_gaussian_mixture
 from .fitting import fit
 from .phases import Phase, Order, group_phases, build_phase, fit_phase
 
@@ -14,6 +16,9 @@ __all__ = ["load_calcurve", "calibrate", "hdi", "build_radiocarbon_density", "fi
 __all__ += ["build_gaussian_mixture", "fit_gaussian_mixture", "evaluate_mixture_density"]
 __all__ += ["models", "fit"]
 __all__ += ["Phase", "Order", "group_phases", "build_phase", "fit_phase"]
+
+__all__ += ["build_single_density", "fit_single_density"]
+__all__ += ['DensitySim', 'simulate_single_density', 'simulate_radiocarbon_density', 'simulate_gaussian_mixture']
 
 # Define version
 __version__ = "0.2.0"
