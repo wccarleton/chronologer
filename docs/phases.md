@@ -74,18 +74,21 @@ must have finite quantiles, so probabilities 0 and 1 are rejected for ordering.
 
 `delta ~ HalfNormal(delta_scale)` is a positive anchor separation in the existing
 calendar units. With native negative BP, adding delta moves toward younger
-dates. An omitted `delta_scale` uses the larger resolved prior scale of the two
-phases. The downstream independent location prior is **replaced**, not retained;
-only each chain's root has a free Normal location prior. Width/sigma priors are
-unchanged. The posterior's `delta` coordinate `order` indexes the input relationship
-sequence; `mu` still covers all labels, including derived locations.
+dates. Each receiving `Phase` now owns its delta. Its optional `delta_scale`
+overrides legacy `Order.delta_scale`; Auto uses the largest resolved prior scale
+of receiver and predecessors. The downstream independent location prior is
+**replaced**, not retained; only roots have free Normal location priors.
+Width/sigma priors are unchanged. The posterior's `delta` now has the labelled
+`input_phase` dimension; `mu` still covers all labels, including derived locations.
 
-Simple disjoint chains such as `A -> B -> C` are supported, even when the input
-relationships are not listed chronologically. Cycles, branching, and multiple
-predecessors are rejected. There are no direct inequality potentials, overlap
+Chains, branches and merges are supported, even when relationships are not
+listed chronologically. A merge replaces the single upstream anchor in the
+equation above with the exact maximum selected predecessor anchor. Duplicate
+edges, cycles and inconsistent receiving quantiles are rejected. There are no direct inequality potentials, overlap
 constraints or Harris-matrix logic. Delta represents an intervening period only
 when the selected anchors are end/start; an explicit intervening period can
-instead be represented as another labelled phase.
+eventually be represented as another phase; unobserved-phase inference is
+currently deferred. See [Phase DAGs](phase-dag.md) for ownership and compatibility.
 
 ## Predictive assessment
 

@@ -69,7 +69,7 @@ def check_order(phases, orders):
     # Two fixed parameter points exercise the actual model algebra, no sampling.
     for multiplier in (1., 2.):
         point["scale_log__"] = point["scale_log__"] + np.log(multiplier)
-        point["delta_log__"] = np.log(np.arange(1, len(orders) + 1) * 7 * multiplier)
+        point["delta_log__"] = np.log(np.arange(1, len(model.coords['input_phase']) + 1) * 7 * multiplier)
         mu, scale, delta = evaluate(point)
         assert (delta > 0).all()
         for k, order in enumerate(orders):
@@ -77,7 +77,7 @@ def check_order(phases, orders):
             p, q = order.anchors
             upstream = phases[order.before].quantile(p, mu[a], scale[a])
             downstream = phases[order.after].quantile(q, mu[b], scale[b])
-            assert downstream - upstream == pytest.approx(delta[k])
+            assert downstream - upstream == pytest.approx(delta[model.coords['input_phase'].index(order.after)])
 
 
 def test_center_order_chain():

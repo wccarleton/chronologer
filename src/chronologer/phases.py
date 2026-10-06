@@ -32,10 +32,17 @@ class Phase:
     Omitted settings use the mixture's empirical rule within this label group:
     mean measurement centres and max(centre range, median measurement SD).
     These are data-scaled priors, not noninformative priors.
+
+    Each non-root phase owns one input delta with HalfNormal(delta_scale) prior.
+    At a merge its older/receiving anchor is the exact maximum selected
+    predecessor anchor plus that delta. Root phases have no delta; their
+    delta_scale setting is unused. Omitted delta_scale falls back to legacy
+    Order settings, then the largest resolved prior scale of related phases.
     """
     distribution: str = "normal"
     prior_center: float | None = None
     prior_scale: float | None = None
+    delta_scale: float | None = None
 
     def __post_init__(self):
         if self.distribution == "gaussian":
@@ -47,6 +54,8 @@ class Phase:
         if self.prior_scale is not None and (
                 not np.isfinite(self.prior_scale) or self.prior_scale <= 0):
             raise ValueError("Phase prior scale must be finite and positive.")
+        if self.delta_scale is not None and (not np.isfinite(self.delta_scale) or self.delta_scale <= 0):
+            raise ValueError('Phase input delta scale must be finite and positive.')
 
     def quantile(self, p, mu, scale):
         """Query any p in [0, 1] for numeric parameters or posterior arrays.
@@ -80,14 +89,17 @@ class Phase:
 class Order:
     """Relate quantile anchors on two labelled phases by a positive delta.
 
-    Order(before, after, anchors=(p, q)) means Q_after(q) = Q_before(p) + delta
+    Order(before, after, anchors=(p, q)) selects predecessor and receiver anchors.
+    The receiver owns one delta: Q_after(q) = max(predecessor anchors) + delta.
+    For a chain this is Q_after(q) = Q_before(p) + delta
     in the caller's existing coordinates. In native negative BP, before is
     older and after is younger. Defaults order medians; (1, 0) orders uniform
     endpoints and (.95, .05) orders normal effective end/start quantiles.
     Normal anchors must be strictly inside (0, 1), since limits are infinite.
 
-    delta ~ HalfNormal(delta_scale), in calendar-time units. If omitted, its
-    scale is max(resolved prior_scale of the two phases), using the same
+    delta ~ HalfNormal(Phase.delta_scale), in calendar-time units. This Order's
+    delta_scale remains a legacy fallback; incoming edges must agree on it.
+    If omitted, its scale is max(resolved prior_scale of all related phases), using the same
     explicit or empirical settings as Phase. delta is an anchor separation,
     not necessarily an intervening period. The downstream mu is derived;
     its former independent Normal prior is not also imposed.
@@ -129,6 +141,40 @@ def group_phases(data):
     return groups
 
 
+def _orders(phases, orders):
+    """Resolve a DAG from specs, independent of event membership or layout."""
+    incoming = {label: [] for label in phases}
+    pairs = set()
+    for order in orders:
+        if not isinstance(order, Order):
+            raise TypeError('orders must contain Order objects.')
+        if order.before not in phases or order.after not in phases:
+            raise ValueError('Order labels must refer to existing phases.')
+        pair = (order.before, order.after)
+        if pair in pairs:
+            raise ValueError('Duplicate phase orders are not supported.')
+        pairs.add(pair)
+        incoming[order.after].append(order)
+        for label, p in zip(pair, order.anchors):
+            if not np.isfinite(phases[label]._offset(p)):
+                raise ValueError('Order anchors must be finite; normal anchors require 0 < p < 1.')
+    for label, edges in incoming.items():
+        if len({edge.anchors[1] for edge in edges}) > 1:
+            raise ValueError('Incoming orders must use the same receiving anchor.')
+        if phases[label].delta_scale is None and len({edge.delta_scale for edge in edges if edge.delta_scale is not None}) > 1:
+            raise ValueError('Incoming legacy delta scales must agree; set Phase.delta_scale explicitly.')
+    roots = [label for label, edges in incoming.items() if not edges]
+    sequence, resolved = [], set(roots)
+    pending = [label for label in phases if label not in resolved]
+    while pending:
+        ready = [label for label in pending if all(edge.before in resolved for edge in incoming[label])]
+        if not ready:
+            raise ValueError('Phase orders must not contain cycles.')
+        for label in ready:
+            sequence.append(label); resolved.add(label); pending.remove(label)
+    return incoming, roots, sequence
+
+
 def build_phase(data, phases, *, measurements, orders=()):
     """Build a joint PyMC hierarchy without sampling.
 
@@ -142,11 +188,10 @@ def build_phase(data, phases, *, measurements, orders=()):
     in original row order. Each tau_i has its group's event distribution and
     the existing measurement log likelihood. tau_0, tau_1, ... are internal
     group variables, indexed by first label occurrence. Optional orders is a
-    sequence of Order relationships forming disjoint chains (A -> B -> C).
-    Each phase may have at most one predecessor and one successor; cycles and
-    branching are unsupported. Input row and relationship order need not be
-    chronological. delta has an ``order`` dimension matching the supplied
-    relationship sequence. Root locations remain free; downstream locations
+    sequence of Order relationships forming a DAG. Each non-root phase owns
+    one positive delta from the exact youngest selected predecessor anchor.
+    delta has a labelled ``input_phase`` dimension. Input row and relationship
+    order need not be chronological. Root locations remain free; downstream locations
     are derived by quantile algebra, without inequality potentials.
     """
     import pymc as pm
@@ -157,35 +202,14 @@ def build_phase(data, phases, *, measurements, orders=()):
     events = list(measurements)
     if not groups or len(events) != len(records):
         raise ValueError("Supply nonempty labelled data and one measurement per row.")
-    if set(phases) != set(groups) or not all(isinstance(s, Phase) for s in phases.values()):
+    if not all(isinstance(s, Phase) for s in phases.values()):
         raise ValueError("Supply exactly one Phase specification per event label.")
-    labels = list(groups)
+    labels = list(groups) + [label for label in phases if label not in groups]
     orders = list(orders)
-    incoming, outgoing = {}, set()
-    for k, order in enumerate(orders):
-        if not isinstance(order, Order):
-            raise TypeError("orders must contain Order objects.")
-        if order.before not in groups or order.after not in groups:
-            raise ValueError("Order labels must refer to existing phases.")
-        if order.after in incoming or order.before in outgoing:
-            raise ValueError("Only chains with one predecessor and successor per phase are supported.")
-        incoming[order.after] = k
-        outgoing.add(order.before)
-        for label, p in zip((order.before, order.after), order.anchors):
-            if not np.isfinite(phases[label]._offset(p)):
-                raise ValueError("Order anchors must be finite; normal anchors require 0 < p < 1.")
-    roots = [label for label in labels if label not in incoming]
-    resolved, pending = set(roots), list(orders)
-    # Resolve simple chains without a graph abstraction or chronological sort.
-    sequence = []
-    while pending:
-        ready = [order for order in pending if order.before in resolved]
-        if not ready:
-            raise ValueError("Phase orders must not contain cycles.")
-        for order in ready:
-            resolved.add(order.after)
-            sequence.append(order)
-            pending.remove(order)
+    incoming, roots, sequence = _orders(phases, orders)
+    if set(phases) != set(groups):
+        raise ValueError('Every phase currently requires labelled measurements; unobserved phase inference is deferred.')
+    receivers = [label for label in labels if incoming[label]]
     indices = {label: [i for i, row in enumerate(records) if row["label"] == label]
                for label in labels}
     bridges = [_measurement(event) for event in events]
@@ -202,7 +226,7 @@ def build_phase(data, phases, *, measurements, orders=()):
                                                + bridges[i][2] for i in indices[label]))
     coords = {"phase": labels, "event": np.arange(len(records))}
     if orders:
-        coords.update(root=roots, order=np.arange(len(orders)))
+        coords.update(root=roots, input_phase=receivers)
     mu_initial = centers.copy()
     with pm.Model(coords=coords) as model:
         if not orders:
@@ -215,30 +239,31 @@ def build_phase(data, phases, *, measurements, orders=()):
             root_mu = pm.Normal("mu_root", mu=centers[root_indices], sigma=spreads[root_indices],
                                 dims="root", initval=centers[root_indices])
             delta_scales = np.array([
-                order.delta_scale if order.delta_scale is not None else
-                max(spreads[positions[order.before]], spreads[positions[order.after]])
-                for order in orders])
+                phases[label].delta_scale if phases[label].delta_scale is not None else
+                next((edge.delta_scale for edge in incoming[label] if edge.delta_scale is not None),
+                     max(spreads[positions[name]] for name in [label, *[edge.before for edge in incoming[label]]]))
+                for label in receivers])
             delta_initial = delta_scales.copy()
-            for order in sequence:
-                a, b = positions[order.before], positions[order.after]
-                k = incoming[order.after]
-                p, q = order.anchors
-                offset_a, offset_b = phases[order.before]._offset(p), phases[order.after]._offset(q)
-                separation = centers[b] + initial[b] * offset_b - mu_initial[a] - initial[a] * offset_a
+            delta_indices = {label: k for k, label in enumerate(receivers)}
+            for label in sequence:
+                b, k = positions[label], delta_indices[label]
+                offset_b = phases[label]._offset(incoming[label][0].anchors[1])
+                reference_anchor = max(mu_initial[positions[edge.before]] + initial[positions[edge.before]]
+                                       * phases[edge.before]._offset(edge.anchors[0]) for edge in incoming[label])
+                separation = centers[b] + initial[b] * offset_b - reference_anchor
                 # Start at measured centers when they satisfy the chosen order.
                 # This changes initialization only, never the delta prior.
                 if separation > 0:
                     delta_initial[k] = separation
-                mu_initial[b] = mu_initial[a] + initial[a] * offset_a + delta_initial[k] - initial[b] * offset_b
-            delta = pm.HalfNormal("delta", sigma=delta_scales, dims="order", initval=delta_initial)
+                mu_initial[b] = reference_anchor + delta_initial[k] - initial[b] * offset_b
+            delta = pm.HalfNormal("delta", sigma=delta_scales, dims="input_phase", initval=delta_initial)
             locations = {label: root_mu[j] for j, label in enumerate(roots)}
-            for order in sequence:
-                a, b = positions[order.before], positions[order.after]
-                k = incoming[order.after]
-                p, q = order.anchors
-                offset_a, offset_b = phases[order.before]._offset(p), phases[order.after]._offset(q)
-                locations[order.after] = (locations[order.before] + scale[a] * offset_a
-                                          + delta[k] - scale[b] * offset_b)
+            for label in sequence:
+                b, k = positions[label], delta_indices[label]
+                anchors = pt.stack([locations[edge.before] + scale[positions[edge.before]]
+                                    * phases[edge.before]._offset(edge.anchors[0]) for edge in incoming[label]])
+                locations[label] = (pt.max(anchors) + delta[k]
+                                    - scale[b] * phases[label]._offset(incoming[label][0].anchors[1]))
             mu = pm.Deterministic("mu", pt.stack([locations[label] for label in labels]), dims="phase")
         latent = [None] * len(records)
         for j, label in enumerate(labels):
